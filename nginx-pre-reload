@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -eo pipefail; [[ $DOKKU_TRACE ]] && set -x
+APP="$1";
+
+# do not even attempt to read ENV if it does not exist
+if [ ! -f "$DOKKU_ROOT/$APP/ENV" ]; then
+    exit 0;
+fi
+
+# read app environment variable with in-container path to custom configuration file
+set +eo pipefail;
+$(cat $DOKKU_ROOT/$APP/ENV | grep 'NGINX_VHOSTS_CUSTOM_CONFIGURATION=')
+set -eo pipefail;
+
+# this plugin will only work if NGINX_VHOSTS_CUSTOM_CONFIGURATION environment variable is set
+if [ "$NGINX_VHOSTS_CUSTOM_CONFIGURATION" == "" ]; then
+    exit 0;
+fi
+
+# make sure that app-specific nginx.conf include directory exists
+if [ ! -d "$DOKKU_ROOT/$APP/nginx.conf.d/" ]; then
+    mkdir "$DOKKU_ROOT/$APP/nginx.conf.d/"
+fi
+
+# import custom configuration to dokku host (allow failure since this script is also run on the config:set before the actual file is pushed)
+set +eo pipefail;
+id=$(docker run -d -e PORT=$(cat $DOKKU_ROOT/$APP/PORT) -e APP=$APP dokku/$APP /bin/bash -c "source /app/.profile.d/01-app-env.sh && erb /app/$NGINX_VHOSTS_CUSTOM_CONFIGURATION")
+test $(docker wait $id) -eq 0
+docker logs $id > $DOKKU_ROOT/$APP/nginx.conf.d/nginx-vhosts-custom-configuration.conf
+docker rm -f $id
+set -eo pipefail;
