@@ -88,7 +88,7 @@ WARNING: if using [dokku-alt](https://github.com/dokku-alt/dokku-alt) rather tha
 
 make sure that you have a symlink in /var/lib/dokku/plugins/ to /var/lib/dokku-alt/plugins/
 
-to make the installation the same process as for dokku 
+this will make the installation of this and other plugins the same process as for dokku (I don't know of any unintended side effects) 
 
 ```bash
 mkdir /var/lib/dokku/
