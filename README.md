@@ -1,9 +1,9 @@
 # Dokku-Alt Extensions used by marchon for [Dokku-Alt](https://github.com/dokku-alt/dokku-alt)
 
 # This plugin adds new dokku command(s) 
-## NGINX VHOST Custom Configuration 
-## FULLBACKUP and RESTORE of a dokku service container 
-## CLONE of a dokku service container 
+### NGINX VHOST Custom Configuration 
+### FULLBACKUP and RESTORE of a dokku service container 
+### CLONE of a dokku service container 
 
 WARNING: This Plugin is "OPIONATED" and was originally forked from multiple sources for my own use: See Credits for details 
 
