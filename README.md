@@ -95,7 +95,7 @@ mkdir /var/lib/dokku/
 ln -s /var/lib/dokku-alt/plugins/ /var/lib/dokku/plugins/
 ```
 
-now please use the following Dokku Installation process below  
+now please use the following Dokku Installation process 
 
 ### Dokku Installation
 ```bash
