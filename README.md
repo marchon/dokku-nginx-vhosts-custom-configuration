@@ -9,7 +9,7 @@ Relevant use cases for when the nginx vhost configuration needs to be customized
 ## Installation
 
 ```bash
-git clone https://github.com/neam/dokku-nginx-vhosts-custom-configuration.git /var/lib/dokku/plugins/nginx-vhosts-custom-configuration
+git clone https://github.com/marchon/dokku-nginx-vhosts-custom-configuration.git /var/lib/dokku/plugins/nginx-vhosts-custom-configuration
 ```
 
 ## Simple usage
