@@ -6,7 +6,7 @@ This plugin adds a new dokku command
 
 ## Usage
 
-nvcc        # nginx vhost custom configuration 
+nvcc        # Nginx Vhost Custom Configuration 
 
 `nvcc:nginx.conf` will display the current nginx.conf
 
