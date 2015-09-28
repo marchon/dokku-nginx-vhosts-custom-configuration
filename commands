@@ -1,60 +1,338 @@
 #!/usr/bin/env bash
 set -eo pipefail; [[ $DOKKU_TRACE ]] && set -x
 
-case "$1" in
-  nvcc:nginx.conf)
-    [[ -z $2 ]] && echo "Please specify an app to run the command on" && exit 1
-    [[ ! -d "$DOKKU_ROOT/$2" ]] && echo "App $2 does not exist" && exit 1
+# COPIED from git/commands!
+create_pre_receive_hook() {
+    PRERECEIVE_HOOK="$2/hooks/pre-receive"
+    cat > "$PRERECEIVE_HOOK" <<EOF
+#!/usr/bin/env bash
+set -e; set -o pipefail;
+cat | DOKKU_ROOT="$DOKKU_ROOT" dokku git-hook "$1"
+EOF
+    chmod +x "$PRERECEIVE_HOOK"
+}
+
+create_bare_repository() {
+    git init --bare "$2" > /dev/null
+    create_pre_receive_hook "$@"
+}
+# END COPIED from git/commands!
+
+# Check if name is specified
+if [[ $1 == nvcc ]] || [[ $1 == nvcc:* ]]; then
+
+  if [[ -z $2 ]]; then
+    echo "You must specify an app name"
+    exit 1
+  else
     APP="$2"
 
-    cat "$DOKKU_ROOT/$APP/nginx.conf"
-  ;;
+    # Check if app exists with the same name
+    if [ ! -d "$DOKKU_ROOT/$APP" ]; then
+      echo "App $APP does not exist"
+      exit 1
+    fi
+
+  fi
+fi
+
+case "$1" in
+
+
+  # copy a container, including its volume and mariadb / mysql Database.
+  #
+  # USAGE: "copy <source-container> <dest-name>"
+  #
+  # - only works if container has exactly ONE volume
+  # - only works if container has exactly ONE Mariadb
+  # - the created database and volume have the same name as the container.
+  copy)
+    source "$(dirname $0)/../dokku_common"
+
+    check_app_name "$2"
+    [[ -d "$APP_DIR/refs" ]] || fail "source $APP: not found."
+    SOURCE_APP_DIR="$APP_DIR"
+    SOURCE_APP="$APP"
+
+    check_app_name "$3"
+    [[ -d "$APP_DIR/refs" ]] && fail "target $APP: already exists; so cannot copy to that."
+    verify_max_args 3 "$@"
+
+    SOURCE_VOLUME_NAME=""
+    for volume in $(dokku volume:list); do
+      if [[ "$volume" == "$APP" ]]; then
+        echo "ERROR: volume $APP already exists."
+        exit 1
+      fi
+
+      for appname in $(dokku volume:list:apps $volume); do
+        if [[ "$appname" == "$SOURCE_APP" ]]; then
+          if [[ "$SOURCE_VOLUME_NAME" != "" ]]; then
+            echo "ERROR: $SOURCE_APP has more than one source volume attached; this is not supported."
+            exit 1
+          fi
+
+          SOURCE_VOLUME_NAME=$volume
+        fi
+      done
+    done
+
+    echo "- Will create target app $APP"
+
+    if [[ "$SOURCE_VOLUME_NAME" != "" ]]; then
+      echo "- Will create target volume $APP"
+    fi
+
+    SOURCE_MARIADB_CONNECTIONS=$(dokku mariadb:list $SOURCE_APP | wc -l)
+    if [[ "1" == "$SOURCE_MARIADB_CONNECTIONS" ]]; then
+      echo "- Will create target database $APP"
+
+      # here, it might still fail
+      dokku mariadb:create "$APP"
+      rm -f /tmp/backup.sql
+      DBNAME=$(dokku mariadb:list $SOURCE_APP)
+      echo "USE $APP;" > /tmp/backup.sql
+      dokku mariadb:dump $SOURCE_APP ${DBNAME//[^a-zA-Z0-9_-]//} >> /tmp/backup.sql
+
+      cat /tmp/backup.sql | dokku mariadb:console:admin
+
+    elif [[ "0" == "$SOURCE_MARIADB_CONNECTIONS" ]]; then
+      echo "- Will not create database, as source has no database"
+    else
+      echo "- ERROR: more than one database found attached to $APP, aborting."
+      exit 1
+    fi
+
+    if [[ "$SOURCE_VOLUME_NAME" != "" ]]; then
+      rm -f /tmp/backup.tar
+      dokku volume:backup "$SOURCE_VOLUME_NAME" /tmp/backup.tar
+      dokku volume:restore "$APP" /tmp/backup.tar
+      rm /tmp/backup.tar
+    fi
+
+    create_bare_repository "$APP" "$APP_DIR"
+    cp "$SOURCE_APP_DIR/ENV" "$APP_DIR/ENV"
+
+    if [[ "1" == "$SOURCE_MARIADB_CONNECTIONS" ]]; then
+      dokku mariadb:link "$APP" "$APP"
+    fi
+
+    if [[ "$SOURCE_VOLUME_NAME" != "" ]]; then
+      dokku volume:link "$APP" "$APP"
+    fi
+
+    pushd $SOURCE_APP_DIR > /dev/null
+    git push --mirror "$APP_DIR"
+    popd > /dev/null
+
+    echo "all done"
+
+    ;;
+
+  # create a full backup to a target directory on the server; including:
+  # - all metadata
+  # - all volumes
+  # - all LINKED MySQL and Postgres Databases
+  #
+  # WARNING: non-linked MySQL / Postgres DBs are NOT backed up!!!
+  fullbackup)
+    BACKUP_PATH="$2"
+    if [[ "$BACKUP_PATH" == "" ]] ; then
+      echo "Backup path not specified"
+      exit 1
+    fi
+
+    echo "Backing up to $BACKUP_PATH"
+    rm -rf "$BACKUP_PATH/*"
+    mkdir -p "$BACKUP_PATH"
+
+    # metadata (env vars etc)
+    echo "- metadata"
+    dokku backup:export "$BACKUP_PATH/metadata.tar"
+    
+    # volumes
+    mkdir -p "$BACKUP_PATH/volumes"
+    for volume in $(dokku volume:list); do
+      echo "- volume $volume"
+      dokku volume:backup $volume "$BACKUP_PATH/volumes/$volume.tar"
+    done
+
+    # databases
+    mkdir -p "$BACKUP_PATH/databases"
+    for app in $(dokku list); do
+    
+      # postgres
+      for db in $(dokku postgresql:list $app); do
+        echo "- app $app: postgresDB $db"
+        mkdir -p "$BACKUP_PATH/databases/$app"
+        mkdir -p "$BACKUP_PATH/databases/$app/postgresql/"
+        dokku postgresql:dump $app $db > "$BACKUP_PATH/databases/$app/postgresql/$db.sql"
+      done
+      
+      # mariadb (mysql)
+      for db in $(dokku mariadb:list $app); do
+        echo "- app $app: mariaDB $db"
+        mkdir -p "$BACKUP_PATH/databases/$app"
+        mkdir -p "$BACKUP_PATH/databases/$app/mariadb/"
+        dokku mariadb:dump $app $db > "$BACKUP_PATH/databases/$app/mariadb/$db.sql"
+      done
+    done
+
+    ;;
+
+  # helper to backup a data volume; specifically everything inside "/app" (as *CONVENTION*)
+  # So, if you create a volume using "volume:create notes_volume /app/var", it gets *backed up*.
+  # If you create a volume using "volume:create notes_volume /var", it does NOT get *backed up*.
+  # Furthermore, 2 special files are included in the backup:
+  # .paths -- the paths with which the volume was created
+  # .app-links -- the current connections to the apps
+  #
+  # HOW TO USE:
+  # either: volume:backup | base64 -D > /your/local/backup.tar
+  # or: volume:backup /path/on/server.tar
+  volume:backup)
+    source "$(dirname $0)/../data-volumes/vars"
+    volume_info "$2"
+    OUTPUT_FILE="$3"
+
+    BACKUP_TMP_DIR=$(mktemp -d)
+    BACKUP_TMP_FILE="$BACKUP_TMP_DIR/backup.tar"
+
+    docker run --volumes-from="$VOLUME_CONTAINER" --rm=true -v $BACKUP_TMP_DIR:/backup "$VOLUME_IMAGE" tar -cf /backup/backup.tar app/
+    
+    pushd "$BACKUP_TMP_DIR" > /dev/null
+    tar -xf backup.tar
+    rm -rf backup.tar
+    cp $VOLUME_PATHS .
+    ls -1 "$VOLUME_CONFIG_DIR" > .app-links
+    tar -cf backup.tar  --exclude=backup.tar .
+    popd > /dev/null
+    
+    # if no file specified, output to stdout
+    if [[ -z $OUTPUT_FILE ]]; then
+      cat $BACKUP_TMP_FILE | base64 -w 0
+    else
+      mv $BACKUP_TMP_FILE $OUTPUT_FILE
+    fi
+
+    rm -rf $BACKUP_TMP_DIR
+    
+    ;;
+    
+  # helper to re-create a backed-up data volume
+  # The following two usages are possible:
+  # remote    : base64 -i bu.tar | ssh dokku@... volume:restore data-volume-name
+  # local file:  ssh dokku@... volume:restore data-volume-name /your/path
+  volume:restore)
+    source "$(dirname $0)/../data-volumes/vars"
+    volume_info "$2"
+
+    BACKUP_TMP_DIR=$(mktemp -d)
+    BACKUP_TMP_FILE="$BACKUP_TMP_DIR/backup.tar"
+    INPUT_FILE="$3"
+
+    pushd "$BACKUP_TMP_DIR" > /dev/null
+    if [[ -z INPUT_FILE ]]; then
+      cat - | base64 -d > $BACKUP_TMP_FILE
+    else
+      cp "$INPUT_FILE" "$BACKUP_TMP_FILE"
+    fi
+
+    # the following code is implemented like volume:create
+    DOCKER_ARGS=()
+    # Verify paths
+    for path in $(tar xf $BACKUP_TMP_FILE ./.paths -O); do
+      if [[ "$NAME" != "root" ]]; then
+        ipath="${path//:/}"
+        [[ "$path" != "$ipath" ]] && fail "$path: Path is forbidden"
+      fi
+      DOCKER_ARGS+=("-v" "$path")
+    done
+
+    # Create data container
+    docker run --name "$VOLUME_CONTAINER" "${DOCKER_ARGS[@]}" -v $BACKUP_TMP_DIR:/backup "$VOLUME_IMAGE" tar -xvf /backup/backup.tar
+
+    # Create data links
+    mkdir -p "$VOLUME_CONFIG_DIR"
+
+    echo "$(tar xf $BACKUP_TMP_FILE ./.paths -O)" > "$VOLUME_PATHS"
+    
+    echo "APP LINKS (shall be created manually)"
+    for appLink in $(tar xf $BACKUP_TMP_FILE ./.app-links -O); do
+      echo "dokku volume:link $appLink $2"
+    done
+    
+    rm -Rf "$BACKUP_TMP_DIR"
+    
+    ;;
+
+  nvcc:nginx.conf)
+
+      cat "$DOKKU_ROOT/$APP/nginx.conf"
+
+    ;;
 
   nvcc:nginx.conf.d)
-    [[ -z $2 ]] && echo "Please specify an app to run the command on" && exit 1
-    [[ ! -d "$DOKKU_ROOT/$2" ]] && echo "App $2 does not exist" && exit 1
-    APP="$2"
 
-    if [ -d "$DOKKU_ROOT/$APP/nginx.conf.d/" ] && [ "$(ls -A $DOKKU_ROOT/$APP/nginx.conf.d/)" ]; then
-      ls -l "$DOKKU_ROOT/$APP/nginx.conf.d/"
-    else
-      echo "$DOKKU_ROOT/$APP/nginx.conf.d/ does not exist or is empty"
-      exit 1
-    fi
-  ;;
+      if [ -d "$DOKKU_ROOT/$APP/nginx.conf.d/" ] && [ "$(ls -A $DOKKU_ROOT/$APP/nginx.conf.d/)" ]; then
+          ls -l "$DOKKU_ROOT/$APP/nginx.conf.d/"
+      else
+          echo "$DOKKU_ROOT/$APP/nginx.conf.d/ does not exist or is empty"
+          exit 1
+      fi
+
+    ;;
 
   nvcc:nginx-vhosts-custom-configuration.conf)
-    [[ -z $2 ]] && echo "Please specify an app to run the command on" && exit 1
-    [[ ! -d "$DOKKU_ROOT/$2" ]] && echo "App $2 does not exist" && exit 1
-    APP="$2"
 
-    if [ -f "$DOKKU_ROOT/$APP/nginx.conf.d/nginx-vhosts-custom-configuration.conf" ]; then
-      cat "$DOKKU_ROOT/$APP/nginx.conf.d/nginx-vhosts-custom-configuration.conf"
-    else
-      echo "$DOKKU_ROOT/$APP/nginx.conf.d/nginx-vhosts-custom-configuration.conf does not exist"
-      exit 1
-    fi
-  ;;
+      if [ -f "$DOKKU_ROOT/$APP/nginx.conf.d/nginx-vhosts-custom-configuration.conf" ]; then
+          cat "$DOKKU_ROOT/$APP/nginx.conf.d/nginx-vhosts-custom-configuration.conf"
+      else
+          echo "$DOKKU_ROOT/$APP/nginx.conf.d/nginx-vhosts-custom-configuration.conf does not exist"
+          exit 1
+      fi
+
+    ;;
 
   nvcc:port)
-    [[ -z $2 ]] && echo "Please specify an app to run the command on" && exit 1
-    [[ ! -d "$DOKKU_ROOT/$2" ]] && echo "App $2 does not exist" && exit 1
-    APP="$2"
 
-    cat "$DOKKU_ROOT/$APP/PORT"
-  ;;
+      cat "$DOKKU_ROOT/$APP/PORT"
+
+    ;;
+
+
+  mariadb:sshtunnel)
+
+      echo "To connect using Sequel Pro, use the following settings:"
+      echo "Type: SSH"
+      echo "MySQL-Host: `docker inspect --format '{{ .NetworkSettings.IPAddress }}' mariadb_single_container`"
+      echo "User: the user displayed by dokku config <app>"
+      echo "Password: the password displayed by dokku config <app>"
+      echo "Database: the password displayed by dokku config <app>"
+      echo ""
+      echo "SSH-Host: dokku2.sandstorm-media.de"
+      echo "SSH-User: <system-user on dokku2; e.g. like sebastian>"
+      echo ""
+      echo ""
+      echo "NOTE: The only dynamic part of the config which changes is the MySQL host."
+
+    ;;
 
   help)
     cat && cat<<EOF
-    nvcc:nginx.conf <app>                               display the current nginx.conf
-    nvcc:nginx.conf.d <app>                             display the current nginx.conf.d/ directory contents
-    nvcc:nginx-vhosts-custom-configuration.conf <app>   will display the current nginx.conf.d/nginx-vhosts-custom-configuration.conf contents
-    nvcc:port <app>                                     will display the current container port
+    mariadb:sshtunnel                                                  display the IP of the MariaDB instance
+    nvcc:nginx.conf                             <app>                  display the current nginx.conf
+    nvcc:nginx.conf.d                           <app>                  display the current nginx.conf.d/ directory contents
+    nvcc:nginx-vhosts-custom-configuration.conf <app>                  will display the current nginx.conf.d/nginx-vhosts-custom-configuration.conf contents
+    nvcc:port                                   <app>                  will display the current container port
+    
+    volume:backup <name> ⎢ base64 -D > /your/local/backup.tar
+    volume:backup <name> /file/on/server.tar
+    volume:restore -- remote usage: base64 -i backup.tar ⎢ ssh dokku@... volume:restore <name>
+    volume:restore <name> /file/on/server.tar
+  
+    fullbackup /directory/on/server                                  do a full backup to the target directory on the server (metadata, volumes, linked MySQL and Postgres DBs)
+    copy <source-app> <destination-app>            Copy container, attached volume, and attached MariaDB.
 EOF
     ;;
-
-  *)
-    exit $DOKKU_NOT_IMPLEMENTED_EXIT
-    ;;
-
 esac
