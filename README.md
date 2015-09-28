@@ -17,6 +17,7 @@ mkdir /var/lib/dokku/
 ln -s /var/lib/dokku-alt/plugins/ /var/lib/dokku/plugins/
 ```
 
+Clone Plugin from Github
 
 ```bash
 git clone https://github.com/marchon/dokku-nginx-vhosts-custom-configuration.git /var/lib/dokku/plugins/nginx-vhosts-custom-configuration
