@@ -9,8 +9,11 @@ This plugin adds a new dokku command
 nvcc        # nginx vhost custom configuration 
 
 `nvcc:nginx.conf` will display the current nginx.conf
+
 `nvcc:nginx.conf.d` will display the current nginx.conf.d/ directory contents
+
 `nvcc:nginx-vhosts-custom-configuration.conf` will display the current nginx.conf.d/nginx-vhosts-custom-configuration.conf contents
+
 `nvcc:port` will display the current container port
 
 
