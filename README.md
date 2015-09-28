@@ -7,9 +7,13 @@
 
 WARNING: This Plugin is "OPIONATED" and was originally forked from multiple sources for my own use: See Credits for details 
 
-This plugin adds handy functionality to [Dokku](https://github.com/progrium/dokku) and [dokku-alt](https://github.com/dokku-alt/dokku-alt)
+"In My Opinion" this plugin adds handy functionality to [Dokku](https://github.com/progrium/dokku) and [dokku-alt](https://github.com/dokku-alt/dokku-alt)
 
 it wants an nginx configuration file for container usually called `nginx.inc.conf` but you can set the filename with an environment variable
+
+
+
+
 
 ## Features
 
