@@ -8,6 +8,16 @@ Relevant use cases for when the nginx vhost configuration needs to be customized
 
 ## Installation
 
+WARNING: if using dokku-alt rather than dokku 
+
+make sure that you have a symlink in /var/lib/dokku/plugins/ to /var/lib/dokku-alt/plugins/ 
+
+```bash
+mkdir /var/lib/dokku/
+ln -s /var/lib/dokku-alt/plugins/ /var/lib/dokku/plugins/
+```
+
+
 ```bash
 git clone https://github.com/marchon/dokku-nginx-vhosts-custom-configuration.git /var/lib/dokku/plugins/nginx-vhosts-custom-configuration
 ```
