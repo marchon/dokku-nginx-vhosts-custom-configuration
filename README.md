@@ -31,7 +31,7 @@ nginx.inc.conf
 
 ## Installation
 
-WARNING: if using dokku-alt rather than dokku 
+WARNING: if using [dokku-alt](https://github.com/dokku-alt/dokku-alt) rather than [Dokku](https://github.com/progrium/dokku) 
 
 make sure that you have a symlink in /var/lib/dokku/plugins/ to /var/lib/dokku-alt/plugins/ 
 
